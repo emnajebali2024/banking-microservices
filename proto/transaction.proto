@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package transaction;
+
+service TransactionService {
+  rpc CreateTransaction (CreateTransactionRequest) returns (TransactionResponse);
+  rpc GetTransaction (GetTransactionRequest) returns (TransactionResponse);
+  rpc GetAccountTransactions (GetAccountTransactionsRequest) returns (TransactionListResponse);
+  rpc GetAllTransactions (Empty) returns (TransactionListResponse);
+}
+
+message Empty {}
+
+message CreateTransactionRequest {
+  string from_account_id = 1;
+  string to_account_id = 2;
+  double amount = 3;
+  string type = 4;
+  string description = 5;
+}
+
+message GetTransactionRequest {
+  string id = 1;
+}
+
+message GetAccountTransactionsRequest {
+  string account_id = 1;
+}
+
+message TransactionResponse {
+  string id = 1;
+  string from_account_id = 2;
+  string to_account_id = 3;
+  double amount = 4;
+  string type = 5;
+  string description = 6;
+  string status = 7;
+  string created_at = 8;
+}
+
+message TransactionListResponse {
+  repeated TransactionResponse transactions = 1;
+}
