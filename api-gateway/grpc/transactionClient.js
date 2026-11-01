@@ -13,7 +13,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const transactionProto = grpc.loadPackageDefinition(packageDef).transaction;
 
 const client = new transactionProto.TransactionService(
-  '127.0.0.1:50052',
+  process.env.TRANSACTION_SERVICE_ADDR || '127.0.0.1:50052',
   grpc.credentials.createInsecure()
 );
 

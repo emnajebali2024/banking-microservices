@@ -13,7 +13,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const notificationProto = grpc.loadPackageDefinition(packageDef).notification;
 
 const client = new notificationProto.NotificationService(
-  '127.0.0.1:50053',
+  process.env.NOTIFICATION_SERVICE_ADDR || '127.0.0.1:50053',
   grpc.credentials.createInsecure()
 );
 

@@ -161,3 +161,129 @@ La collection contient **20 requêtes** :
 -  Notifications via Kafka (REST)
 -  Queries GraphQL
 -  Mutations GraphQL
+
+
+## Conteneurisation avec Docker (TP2 DevOps)
+
+Le projet démarre entièrement avec Docker Compose : quatre microservices Node.js,
+Kafka et Zookeeper, avec des volumes persistants pour les bases de données.
+
+### Architecture des conteneurs
+
+| Service | Rôle | Port | Exposé sur la machine |
+|---|---|---|---|
+| `api-gateway` | REST, GraphQL, clients gRPC | 3000 | oui (3000) |
+| `account-service` | Comptes (gRPC, SQLite) | 50051 | non |
+| `transaction-service` | Transactions (gRPC, SQLite, producteur Kafka) | 50052 | non |
+| `notification-service` | Notifications (gRPC, RxDB, consommateur Kafka) | 50053 | non |
+| `kafka` | Broker d'événements (topic `transaction-created`) | 9092 / 29092 | oui (9092, débogage) |
+| `zookeeper` | Coordination de Kafka | 2181 | non |
+
+Les services communiquent sur le réseau `banking-network` (bridge) en utilisant
+le nom du service comme hostname (par exemple `account-service:50051`).
+
+### Fichiers de conteneurisation
+
+```
+banking-microservices/
+├── docker-compose.yml
+├── account-service/       Dockerfile, .dockerignore
+├── transaction-service/   Dockerfile, .dockerignore
+├── notification-service/  Dockerfile, .dockerignore
+├── api-gateway/           Dockerfile, .dockerignore
+└── proto/                 contrats gRPC partages
+```
+
+Le dossier `proto` est partagé par les quatre services : il est fourni à chaque
+build via un contexte nomme (`additional_contexts`) puis copie dans `/app/proto`.
+
+### Variables d'environnement
+
+| Variable | Service | Valeur dans Docker |
+|---|---|---|
+| `ACCOUNT_SERVICE_ADDR` | api-gateway | `account-service:50051` |
+| `TRANSACTION_SERVICE_ADDR` | api-gateway | `transaction-service:50052` |
+| `NOTIFICATION_SERVICE_ADDR` | api-gateway | `notification-service:50053` |
+| `KAFKA_BROKERS` | transaction, notification | `kafka:29092` |
+| `DB_PATH` | account, transaction | `/data/accounts.db`, `/data/transactions.db` |
+| `DATA_PATH` | notification | `/data/notifications-data.json` |
+
+Sans ces variables, le code utilise ses valeurs locales par défaut (`127.0.0.1`,
+`localhost:9092`), donc l'exécution sans Docker reste possible.
+
+### Volumes persistants
+
+`account-data`, `transaction-data` et `notification-data` conservent les bases
+entre deux arrêts de la stack.
+
+### Commandes
+
+Prérequis : Docker Desktop démarré, ports 3000 et 9092 libres.
+
+| Action | Commande |
+|---|---|
+| Construire et démarrer | `docker compose up --build -d` |
+| État des services | `docker compose ps` |
+| Logs d'un service | `docker compose logs --tail=50 <service>` |
+| Redémarrer un service | `docker compose restart <service>` |
+| Arrêter (données conservées) | `docker compose down` |
+| Arrêter et supprimer les données | `docker compose down -v` |
+
+Le premier démarrage prend quelques minutes (téléchargement de Kafka et
+Zookeeper). Kafka devient `healthy` après environ 30 à 60 secondes, et les
+services qui en dépendent démarrent ensuite.
+
+### Test de bout en bout (PowerShell)
+
+```powershell
+$base = "http://localhost:3000/api"; $acc = "$base/accounts"; $trx = "$base/transactions"
+
+# 1. Create two accounts
+$r1 = Invoke-RestMethod -Method Post -Uri $acc -ContentType "application/json" -Body (@{ owner_name="Alice Test"; email="alice@test.com"; initial_balance=1000; account_type="checking" } | ConvertTo-Json)
+$r2 = Invoke-RestMethod -Method Post -Uri $acc -ContentType "application/json" -Body (@{ owner_name="Bob Test"; email="bob@test.com"; initial_balance=500; account_type="savings" } | ConvertTo-Json)
+
+# 2. Create a transaction (gateway -> gRPC -> Kafka -> notification-service)
+$t = Invoke-RestMethod -Method Post -Uri $trx -ContentType "application/json" -Body (@{ from_account_id=$r1.data.id; to_account_id=$r2.data.id; amount=200; type="transfer"; description="Test" } | ConvertTo-Json)
+
+# 3. Check the notifications created from the Kafka event
+Invoke-RestMethod "$trx/notifications/all/list" | ConvertTo-Json -Depth 5
+docker compose logs --tail=10 notification-service
+```
+
+Résultat observé : la transaction est créée (`COMPLETED`), `transaction-service`
+publie l'événement `transaction-created`, `notification-service` le reçoit et crée
+une notification pour chacun des deux comptes.
+
+### Persistance
+
+`docker compose down` (sans `-v`) puis `docker compose up -d` : les comptes, les
+transactions et les notifications sont toujours présents.
+
+### Diagnostic
+
+1. `docker compose ps -a` : repérer les services `Exited`, `Restarting` ou `unhealthy`.
+2. `docker compose logs --tail=50 <service>` : lire l'erreur.
+3. `docker compose config` : afficher la configuration finale lue par Compose.
+4. `docker compose exec <service> sh` : entrer dans le conteneur (par exemple `ls -la /data`).
+5. Corriger puis `docker compose up --build -d`.
+
+Cas fréquents : Kafka pas encore prêt (les services qui en dépendent attendent
+son état `healthy`), adresse gRPC restée sur `localhost` au lieu du nom du service,
+port 3000 déjà utilisé sur la machine.
+
+### Difficultés rencontrées
+
+- **Adresses en dur** : la gateway appelait `127.0.0.1` et Kafka `localhost:9092`.
+  Dans Docker, `localhost` désigne le conteneur lui-même. Les adresses sont
+  maintenant lues depuis des variables d'environnement.
+- **Kafka inaccessible entre conteneurs** : l'adresse annoncée était
+  `localhost:9092`. Ajout d'un second listener interne `kafka:29092`.
+- **Démarrage trop rapide de Kafka** : Kafka a redémarré au premier lancement car
+  Zookeeper n'était pas prêt. Ajout de healthchecks et de `depends_on` avec
+  `condition: service_healthy`.
+- **Dossier `proto` hors des services** : utilisation d'un contexte de build nommé
+  pour le partager sans modifier le code.
+- **Données des bases** : les fichiers SQLite et RxDB sont écrits dans des volumes
+  nommés et non dans l'image.
+- **Limite connue du projet d'origine** : une transaction ne modifie pas le solde
+  des comptes (route séparée `PATCH /accounts/:id/balance`).

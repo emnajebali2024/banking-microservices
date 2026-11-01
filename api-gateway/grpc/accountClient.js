@@ -13,7 +13,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const accountProto = grpc.loadPackageDefinition(packageDef).account;
 
 const client = new accountProto.AccountService(
-  '127.0.0.1:50051',
+  process.env.ACCOUNT_SERVICE_ADDR || '127.0.0.1:50051',
   grpc.credentials.createInsecure()
 );
 

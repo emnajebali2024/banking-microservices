@@ -8,7 +8,7 @@ const path = require('path');
 addRxPlugin(RxDBQueryBuilderPlugin);
 addRxPlugin(RxDBUpdatePlugin);
 
-const DATA_PATH = path.join(__dirname, 'notifications-data.json');
+const DATA_PATH = process.env.DATA_PATH || path.join(__dirname, 'notifications-data.json');
 
 let db = null;
 let notificationsCollection = null;

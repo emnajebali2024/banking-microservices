@@ -1,0 +1,6 @@
+@"
+node_modules
+**/node_modules
+.env
+**/.env
+"@ | Set-Content -Path .gitignore -Encoding utf8
